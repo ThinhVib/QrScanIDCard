@@ -34,7 +34,7 @@
     <button id="backBtn">← Back</button>
     <h2 id="methodTitle"></h2>
     <video id="video" playsinline autoplay></video>
-    <canvas id="canvas"></canvas>
+    <canvas id="canvas" style="display:none;"></canvas>
     <p id="output">Initializing...</p>
   </div>
 
@@ -47,18 +47,27 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const output = document.getElementById('output');
-    let stream, scanLoop;
+    let stream, scanLoop, found;
     let currentMethod;
 
-    // Show specified page
     function showPage(page) {
       Object.values(pages).forEach(p => p.classList.remove('active'));
       pages[page].classList.add('active');
     }
 
-    // Start camera
     async function startCamera() {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      });
+      const [track] = stream.getVideoTracks();
+      const caps = track.getCapabilities();
+      if (caps.zoom) {
+        await track.applyConstraints({ advanced: [{ zoom: caps.zoom.max }] });
+      }
       video.srcObject = stream;
       await video.play();
       canvas.width = video.videoWidth;
@@ -73,15 +82,16 @@
 
     function clearLoop() {
       if (scanLoop) cancelAnimationFrame(scanLoop);
-      Quagga.offDetected();
+      try { Quagga.stop(); } catch {}
+      try { Quagga.offDetected(); } catch {}
     }
 
-    // Navigation handlers
     buttons.forEach(btn => {
       btn.addEventListener('click', async () => {
         currentMethod = btn.getAttribute('data-method');
         methodTitle.textContent = btn.textContent;
         showPage('scanner');
+        found = false;
         output.textContent = 'Initializing camera...';
         try {
           await startCamera();
@@ -100,7 +110,6 @@
       output.textContent = '';
     });
 
-    // Dispatch to scanner
     function runScanner(method) {
       clearLoop();
       switch (method) {
@@ -111,7 +120,6 @@
       }
     }
 
-    // 1. Native BarcodeDetector
     async function scanNative() {
       if (!('BarcodeDetector' in window)) {
         output.textContent = 'BarcodeDetector not supported.';
@@ -119,47 +127,84 @@
       }
       const detector = new BarcodeDetector({ formats: ['qr_code'] });
       const detectFrame = async () => {
+        if (found) return;
+        const cw = canvas.width * 0.5, ch = canvas.height * 0.5;
+        const cx = (canvas.width - cw) / 2, cy = (canvas.height - ch) / 2;
+        ctx.drawImage(video, cx, cy, cw, ch, 0, 0, canvas.width, canvas.height);
         try {
-          const results = await detector.detect(video);
-          if (results.length) output.textContent = 'Data: ' + results[0].rawValue;
-        } catch {}
+          const results = await detector.detect(canvas);
+          if (results.length) {
+            found = true;
+            output.textContent = '✅ ' + results[0].rawValue;
+            stopCamera();
+            return;
+          }
+        } catch (e) {}
         scanLoop = requestAnimationFrame(detectFrame);
       };
       detectFrame();
     }
 
-    // 2. jsQR
     function scanJsQR() {
       const loop = () => {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(img.data, img.width, img.height);
-        output.textContent = code ? 'Data: ' + code.data : 'No QR detected.';
+        if (found) return;
+        const cw = canvas.width * 0.5, ch = canvas.height * 0.5;
+        const cx = (canvas.width - cw) / 2, cy = (canvas.height - ch) / 2;
+        ctx.drawImage(video, cx, cy, cw, ch, 0, 0, canvas.width, canvas.height);
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imgData.data, imgData.width, imgData.height);
+        if (code) {
+          found = true;
+          output.textContent = '✅ ' + code.data;
+          stopCamera();
+          return;
+        }
         scanLoop = requestAnimationFrame(loop);
       };
       loop();
     }
 
-    // 3. QuaggaJS
     function scanQuagga() {
       Quagga.init({
-        inputStream: { type: 'LiveStream', target: video, constraints: { facingMode: 'environment' } },
+        inputStream: {
+          type: 'LiveStream',
+          target: video,
+          constraints: { facingMode: 'environment' },
+          area: { top: '25%', right: '25%', bottom: '25%', left: '25%' }
+        },
         decoder: { readers: ['qr_reader'] }
       }, err => {
-        if (err) output.textContent = 'Quagga init error.';
-        else Quagga.start();
+        if (err) {
+          output.textContent = 'Quagga init error.';
+          return;
+        }
+        Quagga.start();
+        Quagga.onDetected(data => {
+          if (found) return;
+          found = true;
+          output.textContent = '✅ ' + data.codeResult.code;
+          Quagga.stop();
+          stopCamera();
+        });
       });
-      Quagga.onDetected(data => output.textContent = 'Data: ' + data.codeResult.code);
     }
 
-    // 4. ZXing (WASM)
     function scanZXing() {
       const codeReader = new ZXing.BrowserMultiFormatReader();
       const loop = async () => {
+        if (found) return;
+        const cw = canvas.width * 0.5, ch = canvas.height * 0.5;
+        const cx = (canvas.width - cw) / 2, cy = (canvas.height - ch) / 2;
+        ctx.drawImage(video, cx, cy, cw, ch, 0, 0, canvas.width, canvas.height);
         try {
-          const result = await codeReader.decodeFromVideoElement(video);
-          if (result) output.textContent = 'Data: ' + result.text;
-        } catch {}
+          const result = await codeReader.decodeFromCanvas(canvas);
+          if (result) {
+            found = true;
+            output.textContent = '✅ ' + result.text;
+            stopCamera();
+            return;
+          }
+        } catch (e) {}
         scanLoop = requestAnimationFrame(loop);
       };
       loop();
