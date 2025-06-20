@@ -74,7 +74,7 @@
 
     // Vision API call
     async function detectBarcodes(base64Image) {
-      const requestBody = { requests: [{ image: { content: base64Image }, features: [{ type: 'BARCODE_DETECTION' }] }] };
+      const requestBody = { requests: [{ image: { content: base64Image }, features: [{ type: 'TEXT_DETECTION' }] }] };
       const response = await fetch(
         `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
         {
