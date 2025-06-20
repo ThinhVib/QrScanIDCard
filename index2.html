@@ -82,7 +82,7 @@
       output.textContent = 'Scanning...';
       const base64 = captureFrame();
       try {
-        const requestBody = { requests: [{ image: { content: base64 }, features: [{ type: 'BARCODE_DETECTION' }] }] };
+        const requestBody = { requests: [{ image: { content: base64 }, features: [{ type: 'TEXT_DETECTION' }] }] };
         const response = await fetch(
           `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody) }
