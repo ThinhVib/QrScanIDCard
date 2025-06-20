@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR Scanner Multi-Solution Project</title>
+  <!-- Libraries -->
+  <script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
+  <script src="https://unpkg.com/quagga@0.12.1/dist/quagga.min.js"></script>
+  <script src="https://unpkg.com/@zxing/library@0.18.6/umd/index.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; text-align: center; }
+    .page { display: none; }
+    .active { display: block; }
+    video { width: 100%; max-width: 400px; border: 1px solid #ccc; margin: 10px auto; }
+    #output { margin-top: 10px; font-weight: bold; }
+    button { margin: 5px; padding: 10px 20px; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <h1>QR Scanner Multi-Solution</h1>
+
+  <!-- Navigation -->
+  <div id="homePage" class="page active">
+    <p>Select a scanning method:</p>
+    <button data-method="native">BarcodeDetector</button>
+    <button data-method="jsqr">jsQR</button>
+    <button data-method="quagga">QuaggaJS</button>
+    <button data-method="zxing">ZXing (WASM)</button>
+  </div>
+
+  <!-- Scanner Pages -->
+  <div id="scannerPage" class="page">
+    <button id="backBtn">← Back</button>
+    <h2 id="methodTitle"></h2>
+    <video id="video" playsinline autoplay></video>
+    <canvas id="canvas"></canvas>
+    <p id="output">Initializing...</p>
+  </div>
+
+  <script>
+    const pages = { home: document.getElementById('homePage'), scanner: document.getElementById('scannerPage') };
+    const buttons = document.querySelectorAll('#homePage button');
+    const backBtn = document.getElementById('backBtn');
+    const methodTitle = document.getElementById('methodTitle');
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const output = document.getElementById('output');
+    let stream, scanLoop;
+    let currentMethod;
+
+    // Show specified page
+    function showPage(page) {
+      Object.values(pages).forEach(p => p.classList.remove('active'));
+      pages[page].classList.add('active');
+    }
+
+    // Start camera
+    async function startCamera() {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      video.srcObject = stream;
+      await video.play();
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+
+    function stopCamera() {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      video.pause();
+      video.srcObject = null;
+    }
+
+    function clearLoop() {
+      if (scanLoop) cancelAnimationFrame(scanLoop);
+      Quagga.offDetected();
+    }
+
+    // Navigation handlers
+    buttons.forEach(btn => {
+      btn.addEventListener('click', async () => {
+        currentMethod = btn.getAttribute('data-method');
+        methodTitle.textContent = btn.textContent;
+        showPage('scanner');
+        output.textContent = 'Initializing camera...';
+        try {
+          await startCamera();
+          output.textContent = 'Scanning using ' + currentMethod + '...';
+          runScanner(currentMethod);
+        } catch (e) {
+          output.textContent = 'Camera error: ' + e.message;
+        }
+      });
+    });
+
+    backBtn.addEventListener('click', () => {
+      clearLoop();
+      stopCamera();
+      showPage('home');
+      output.textContent = '';
+    });
+
+    // Dispatch to scanner
+    function runScanner(method) {
+      clearLoop();
+      switch (method) {
+        case 'native': scanNative(); break;
+        case 'jsqr': scanJsQR(); break;
+        case 'quagga': scanQuagga(); break;
+        case 'zxing': scanZXing(); break;
+      }
+    }
+
+    // 1. Native BarcodeDetector
+    async function scanNative() {
+      if (!('BarcodeDetector' in window)) {
+        output.textContent = 'BarcodeDetector not supported.';
+        return;
+      }
+      const detector = new BarcodeDetector({ formats: ['qr_code'] });
+      const detectFrame = async () => {
+        try {
+          const results = await detector.detect(video);
+          if (results.length) output.textContent = 'Data: ' + results[0].rawValue;
+        } catch {}
+        scanLoop = requestAnimationFrame(detectFrame);
+      };
+      detectFrame();
+    }
+
+    // 2. jsQR
+    function scanJsQR() {
+      const loop = () => {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(img.data, img.width, img.height);
+        output.textContent = code ? 'Data: ' + code.data : 'No QR detected.';
+        scanLoop = requestAnimationFrame(loop);
+      };
+      loop();
+    }
+
+    // 3. QuaggaJS
+    function scanQuagga() {
+      Quagga.init({
+        inputStream: { type: 'LiveStream', target: video, constraints: { facingMode: 'environment' } },
+        decoder: { readers: ['qr_reader'] }
+      }, err => {
+        if (err) output.textContent = 'Quagga init error.';
+        else Quagga.start();
+      });
+      Quagga.onDetected(data => output.textContent = 'Data: ' + data.codeResult.code);
+    }
+
+    // 4. ZXing (WASM)
+    function scanZXing() {
+      const codeReader = new ZXing.BrowserMultiFormatReader();
+      const loop = async () => {
+        try {
+          const result = await codeReader.decodeFromVideoElement(video);
+          if (result) output.textContent = 'Data: ' + result.text;
+        } catch {}
+        scanLoop = requestAnimationFrame(loop);
+      };
+      loop();
+    }
+  </script>
+</body>
+</html>
