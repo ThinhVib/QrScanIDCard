@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QR Code Scanner with Google Cloud Vision</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
+    video, img { border: 1px solid #ccc; border-radius: 4px; margin-top: 10px; }
+    #output { margin-top: 10px; font-size: 1.2em; color: #333; }
+    button, input { margin: 5px; padding: 8px 12px; font-size: 1em; }
+    input { width: 260px; }
+  </style>
+</head>
+<body>
+  <h1>QR Code Scanner Demo</h1>
+
+  <!-- API Key input -->
+  <div>
+    <input type="text" id="apiKeyInput" placeholder="Enter your Cloud Vision API Key" />
+    <button id="setKeyBtn">Set API Key</button>
+  </div>
+
+  <!-- Video and controls -->
+  <video id="video" width="300" autoplay playsinline></video>
+  <div>
+    <button id="startBtn" disabled>Start Scanning</button>
+    <button id="stopBtn" disabled>Stop Scanning</button>
+  </div>
+
+  <!-- Output and snapshot -->
+  <p id="output">Please set your API key to begin.</p>
+  <img id="snapshot" width="300" alt="Last captured frame" />
+
+  <script>
+    let apiKey = '';
+    const video = document.getElementById('video');
+    const output = document.getElementById('output');
+    const snapshot = document.getElementById('snapshot');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const apiKeyInput = document.getElementById('apiKeyInput');
+    const setKeyBtn = document.getElementById('setKeyBtn');
+
+    let stream;
+    let scanningInterval;
+
+    // Camera startup
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+      } catch (errPrimary) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        } catch (errFallback) {
+          console.error('Camera error:', errFallback);
+          output.textContent = 'Cannot access camera. Please allow camera access and ensure your browser supports it.';
+          return;
+        }
+      }
+      video.srcObject = stream;
+    }
+
+    // Capture frame and show snapshot
+    function captureFrame() {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      const dataUrl = canvas.toDataURL('image/jpeg');
+      snapshot.src = dataUrl;
+      return dataUrl.split(',')[1];
+    }
+
+    // Vision API call
+    async function detectBarcodes(base64Image) {
+      const requestBody = { requests: [{ image: { content: base64Image }, features: [{ type: 'BARCODE_DETECTION' }] }] };
+      const response = await fetch(
+        `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
+        {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody)
+        }
+      );
+      const data = await response.json();
+      const annotations = data.responses?.[0]?.barcodeAnnotations || [];
+      return annotations.map(a => a.rawValue);
+    }
+
+    // Scan logic every 3 seconds
+    async function scanFrame() {
+      output.textContent = 'Scanning...';
+      const base64 = captureFrame();
+      try {
+        const codes = await detectBarcodes(base64);
+        output.textContent = codes.length ? 'Detected: ' + codes.join(', ') : 'No QR code detected.';
+      } catch (error) {
+        console.error('Vision API error:', error);
+        output.textContent = 'Error scanning QR code.';
+      }
+    }
+
+    // Button events
+    setKeyBtn.addEventListener('click', () => {
+      const key = apiKeyInput.value.trim();
+      if (!key) {
+        alert('Please enter a valid API key.');
+        return;
+      }
+      apiKey = key;
+      apiKeyInput.disabled = true;
+      setKeyBtn.disabled = true;
+      output.textContent = 'API key set. Ready to scan.';
+      startBtn.disabled = false;
+    });
+
+    startBtn.addEventListener('click', () => {
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      scanFrame();
+      scanningInterval = setInterval(scanFrame, 3000);
+    });
+
+    stopBtn.addEventListener('click', () => {
+      clearInterval(scanningInterval);
+      stopBtn.disabled = true;
+      startBtn.disabled = false;
+      output.textContent = 'Scanning stopped.';
+    });
+
+    // Initialize camera on load
+    startCamera();
+  </script>
+</body>
+</html>
